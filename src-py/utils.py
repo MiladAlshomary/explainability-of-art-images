@@ -4,10 +4,6 @@ import os
 import argparse # Added for command-line argument parsing
 import json # Added for saving results to JSON
 import torch
-
-import torch
-import requests
-from PIL import Image
 from lavis.models import load_model_and_preprocess
 
 def image_captioning(folder_path, model_name, model_type="caption_coco_flant5xl", num_captions=5):
@@ -44,16 +40,29 @@ def image_captioning(folder_path, model_name, model_type="caption_coco_flant5xl"
         image_path = os.path.join(folder_path, filename)
         if os.path.isfile(image_path) and filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')):
             try:
-                raw_image = Image.open(image_path).convert('RGB')
-                image = vis_processors["eval"](raw_image).unsqueeze(0).to(device)
+                raw_image_pil = Image.open(image_path).convert('RGB')
+
+                # Speculative: Reconstruct PIL image via NumPy array.
+                # This is an attempt to normalize the PIL object, in case subtle
+                # internal differences contribute to downstream type issues.
+                # This is unlikely to fix a fundamental type identity check error
+                # (expected np.ndarray got numpy.ndarray) in a library.
+                image_to_process = raw_image_pil # Default to original
+                try:
+                    np_array_from_pil = np.array(raw_image_pil)
+                    if np_array_from_pil.dtype != np.uint8: # Ensure uint8 for RGB
+                        np_array_from_pil = np_array_from_pil.astype(np.uint8)
+                    image_to_process = Image.fromarray(np_array_from_pil)
+                except Exception as recon_e:
+                    print(f"Warning: Could not reconstruct PIL image {filename} via NumPy, using original. Error: {recon_e}")
+
+                image = vis_processors["eval"](image_to_process).unsqueeze(0).to(device)
 
                 caption_beam = model.generate({"image": image})
                 caption_nucleus = model.generate({"image": image}, use_nucleus_sampling=True, num_captions=num_captions)
 
                 captions_dict[image_path] = {"beam_search": caption_beam, "nucleus_sampling": caption_nucleus}
-                print(f"--- Image: {filename} ---")
-                print(f"Caption (Beam Search): {caption_beam}")
-                print(f"Captions (Nucleus Sampling): {caption_nucleus}\n")
+                # Print statements moved to main section for cleaner function output if used as a library
             except Exception as e:
                 print(f"Could not process image {filename}: {e}")
     return captions_dict
