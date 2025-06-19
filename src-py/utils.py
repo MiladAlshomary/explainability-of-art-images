@@ -59,7 +59,13 @@ def image_captioning(folder_path, model_name, model_type="caption_coco_flant5xl"
                 image = vis_processors["eval"](image_to_process).unsqueeze(0).to(device)
 
                 caption_beam = model.generate({"image": image})
-                caption_nucleus = model.generate({"image": image}, use_nucleus_sampling=True, num_captions=num_captions)
+                caption_nucleus = model.generate(
+                    {"image": image},
+                    use_nucleus_sampling=True,
+                    num_captions=num_captions,
+                    temperature=1.2,  # Increased temperature for more randomness
+                    top_p=0.9  # Adjust top_p for nucleus sampling diversity
+                )
 
                 captions_dict[image_path] = {"beam_search": caption_beam, "nucleus_sampling": caption_nucleus}
                 # Print statements moved to main section for cleaner function output if used as a library
@@ -140,6 +146,15 @@ def get_sharegpt4v_image_representations(folder_path, processor, model, device='
             # For now, we store what the vision encoder returns.
             representations[image_path] = image_features.cpu() # Store on CPU
     return representations
+
+
+def cluster_visual_representations(visual_representations, eps=0.1, min_samples=5):
+    """
+    Cluster visual representations using DBSCAN.
+    """
+    return cluster_labels
+
+    
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate image captions using a BLIP model.")
