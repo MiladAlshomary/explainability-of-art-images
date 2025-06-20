@@ -12,7 +12,7 @@ from sklearn.metrics import silhouette_score
 
 def image_captioning(folder_path, model_name, model_type="caption_coco_flant5xl", num_captions=5):
     from lavis.models import load_model_and_preprocess
-    
+
     """
     Loads images from a folder, generates captions for each using a specified BLIP model.
 
@@ -112,19 +112,20 @@ def generate_image_descriptions(folder_path, processor, model, system_pormpt, de
     for filename in os.listdir(folder_path):
         image_path = os.path.join(folder_path, filename)
         if os.path.isfile(image_path) and filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')):
-            try:
-                raw_image_pil = Image.open(image_path).convert('RGB')
-                
-                # Process image using the provided processor (e.g., lavis vis_processors["eval"])
-                image_tensor = processor(raw_image_pil).unsqueeze(0).to(device)
-
-                # Generate description/answer using the model's generate method
-                with torch.no_grad(): # Ensure no gradients are computed during inference
-                    generated_outputs = model.generate({"image": image_tensor, "prompt": system_pormpt})
-                
-                descriptions_dict[image_path] = generated_outputs # model.generate typically returns a list of strings
-            except Exception as e:
-                print(f"Could not process image {filename} for description generation: {e}")
+            #try:
+            raw_image_pil = Image.open(image_path).convert('RGB')
+            
+            # Process image using the provided processor (e.g., lavis vis_processors["eval"])
+            image_tensor = processor(raw_image_pil, return_tensors='pt')['pixel_values']
+            image_tensor = image_tensor.to(device)
+            
+            # Generate description/answer using the model's generate method
+            with torch.no_grad(): # Ensure no gradients are computed during inference
+                generated_outputs = model.generate({"image": image_tensor, "prompt": system_pormpt})
+            
+            descriptions_dict[image_path] = generated_outputs # model.generate typically returns a list of strings
+            # except Exception as e:
+            #     print(f"Could not process image {filename} for description generation: {e}")
     return descriptions_dict
 
 
