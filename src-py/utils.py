@@ -79,25 +79,25 @@ def image_captioning(folder_path, model_name, model_type="caption_coco_flant5xl"
                 print(f"Could not process image {filename}: {e}")
     return captions_dict
 
-def generate_image_descriptions(folder_path, processor, model, system_pormpt, device='cuda:0') -> dict:
+def generate_image_descriptions(folder_path, processor, model, system_prompt: str, device: str = 'cuda:0', **generation_kwargs) -> dict:
     """
     Loads images from a folder, and for each image, generates a description
-    or answers a question based on the system_pormpt using the provided model.
-    This function assumes the model and processor are compatible with the LAVIS library's API,
-    similar to the `image_captioning` function.
+    or answers a question based on the system_prompt using the provided Hugging Face
+    Transformers compatible model and processor.
 
     Args:
         folder_path (str): Path to the folder containing images.
-        processor: The visual processor (e.g., vis_processors["eval"] from lavis).
-                   This is expected to be a callable that takes a PIL image and returns a tensor.
-        model: The pre-trained model (e.g., a lavis VQA or instruction-following model)
+        processor: A Hugging Face Transformers compatible processor
+                   (e.g., AutoProcessor from Blip, Llava) that can process
+                   both images and text.
+        model: A Hugging Face Transformers compatible pre-trained model
+               (e.g., BlipForConditionalGeneration, LlavaForConditionalGeneration)
                with a `generate` method.
-        system_pormpt (str): The prompt, question, or instruction to apply to each image.
-                             The model's `generate` method will receive this as the "prompt" argument.
-                             Users should format this string appropriately for the specific model
-                             (e.g., "Question: What is in this image? Answer:").
+        system_prompt (str): The prompt, question, or instruction to apply to each image.
+                             This will be tokenized by the processor.
         device (str): The device to run the model on (e.g., 'cuda:0' or 'cpu').
-                      The input image tensor will be moved to this device.
+        **generation_kwargs: Additional keyword arguments to pass to the model's
+                             `generate` method (e.g., max_length, num_beams).
 
     Returns:
         dict: A dictionary where keys are image file paths and values are
@@ -112,20 +112,24 @@ def generate_image_descriptions(folder_path, processor, model, system_pormpt, de
     for filename in os.listdir(folder_path):
         image_path = os.path.join(folder_path, filename)
         if os.path.isfile(image_path) and filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')):
-            #try:
-            raw_image_pil = Image.open(image_path).convert('RGB')
-            
-            # Process image using the provided processor (e.g., lavis vis_processors["eval"])
-            image_tensor = processor(raw_image_pil, return_tensors='pt')['pixel_values']
-            image_tensor = image_tensor.to(device)
-            
-            # Generate description/answer using the model's generate method
-            with torch.no_grad(): # Ensure no gradients are computed during inference
-                generated_outputs = model.generate({"image": image_tensor, "prompt": system_pormpt})
-            
-            descriptions_dict[image_path] = generated_outputs # model.generate typically returns a list of strings
-            # except Exception as e:
-            #     print(f"Could not process image {filename} for description generation: {e}")
+            try:
+                raw_image_pil = Image.open(image_path).convert('RGB')
+
+                # Prepare inputs for the Hugging Face model using the processor
+                # This processor should handle tokenizing the text and preparing the image
+                inputs = processor(images=raw_image_pil, text=system_prompt, return_tensors="pt").to(device)
+
+                # Generate description/answer using the model's generate method
+                with torch.no_grad(): # Ensure no gradients are computed during inference
+                    generated_ids = model.generate(**inputs, **generation_kwargs)
+
+                # Decode the generated token IDs to text
+                # The processor should have a batch_decode method
+                generated_texts = processor.batch_decode(generated_ids, skip_special_tokens=True)
+
+                descriptions_dict[image_path] = generated_texts
+            except Exception as e:
+                print(f"Could not process image {filename} for description generation: {e}")
     return descriptions_dict
 
 
