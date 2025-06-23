@@ -10,6 +10,18 @@ from sklearn.decomposition import PCA
 from sklearn.cluster import DBSCAN
 from sklearn.metrics import silhouette_score
 
+# Imports for ShareGPT4V/LLaVA models.
+# These are needed for the 'generate_descriptions_with_share4v' function.
+try:
+    from share4v.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN
+    from share4v.conversation import conv_templates, SeparatorStyle
+    from share4v.mm_utils import tokenizer_image_token, KeywordsStoppingCriteria, get_model_name_from_path
+except ImportError:
+    print("Warning: Could not import 'share4v' components. The 'generate_descriptions_with_share4v' function will not be available.")
+    # Define dummy placeholders to avoid crashing if share4v is not installed
+    conv_templates = {}
+
+
 def image_captioning(folder_path, model_name, model_type="caption_coco_flant5xl", num_captions=5):
     from lavis.models import load_model_and_preprocess
 
@@ -79,29 +91,24 @@ def image_captioning(folder_path, model_name, model_type="caption_coco_flant5xl"
                 print(f"Could not process image {filename}: {e}")
     return captions_dict
 
-def generate_image_descriptions(folder_path, processor, model, system_prompt: str, device: str = 'cuda:0', **generation_kwargs) -> dict:
+def generate_image_descriptions(folder_path, processor, model, prompt: str = None, device: str = 'cuda:0', **generation_kwargs) -> dict:
     """
-    Loads images from a folder, and for each image, generates a description
-    or answers a question based on the system_prompt using the provided Hugging Face
-    Transformers compatible model and processor.
+    Loads images from a folder and generates descriptions or answers questions.
+    If a prompt is provided, it performs VQA or prompted generation.
+    If no prompt is provided, it performs standard image captioning.
 
     Args:
         folder_path (str): Path to the folder containing images.
-        processor: A Hugging Face Transformers compatible processor
-                   (e.g., AutoProcessor from Blip, Llava) that can process
-                   both images and text.
-        model: A Hugging Face Transformers compatible pre-trained model
-               (e.g., BlipForConditionalGeneration, LlavaForConditionalGeneration)
-               with a `generate` method.
-        system_prompt (str): The prompt, question, or instruction to apply to each image.
-                             This will be tokenized by the processor.
+        processor: A Hugging Face Transformers compatible processor.
+        model: A Hugging Face Transformers compatible pre-trained model with a `generate` method.
+        prompt (str, optional): The prompt, question, or instruction for the model.
+                                For chat models, this should be a fully formatted string
+                                (e.g., "USER: <image>\\nWhat is this?"). Defaults to None.
         device (str): The device to run the model on (e.g., 'cuda:0' or 'cpu').
-        **generation_kwargs: Additional keyword arguments to pass to the model's
-                             `generate` method (e.g., max_length, num_beams).
+        **generation_kwargs: Additional keyword arguments for the model's `generate` method.
 
     Returns:
-        dict: A dictionary where keys are image file paths and values are
-              lists of generated textual outputs (strings) from the model.
+        dict: A dictionary mapping image file paths to generated text.
     """
     descriptions_dict = {}
 
@@ -115,21 +122,139 @@ def generate_image_descriptions(folder_path, processor, model, system_prompt: st
             try:
                 raw_image_pil = Image.open(image_path).convert('RGB')
 
-                # Prepare inputs for the Hugging Face model using the processor
-                # This processor should handle tokenizing the text and preparing the image
-                inputs = processor(images=raw_image_pil, text=system_prompt, return_tensors="pt").to(device)
+                # Prepare inputs for the model. If a prompt is given, include it.
+                # Otherwise, just process the image for captioning.
+                if prompt:
+                    inputs = processor(images=raw_image_pil, text=prompt, return_tensors="pt").to(device)
+                else:
+                    inputs = processor(images=raw_image_pil, return_tensors="pt").to(device)
 
-                # Generate description/answer using the model's generate method
-                with torch.no_grad(): # Ensure no gradients are computed during inference
-                    generated_ids = model.generate(**inputs, **generation_kwargs)
+                pixel_values = inputs.get("pixel_values")
+                if pixel_values is None:
+                    print(f"Warning: Processor did not return 'pixel_values' for {filename}. Skipping.")
+                    continue
 
-                # Decode the generated token IDs to text
-                # The processor should have a batch_decode method
+                # Prepare arguments for the generate method, which may or may not include text inputs
+                generate_args = {"pixel_values": pixel_values, **generation_kwargs}
+
+                input_ids = inputs.get("input_ids")
+                if input_ids is not None:
+                    generate_args["input_ids"] = input_ids
+
+                attention_mask = inputs.get("attention_mask")
+                if attention_mask is not None:
+                    generate_args["attention_mask"] = attention_mask
+
+                # Generate text using the model
+                with torch.no_grad():
+                    generated_ids = model.generate(**generate_args)
+
+                # Decode the generated IDs to text
                 generated_texts = processor.batch_decode(generated_ids, skip_special_tokens=True)
 
                 descriptions_dict[image_path] = generated_texts
             except Exception as e:
                 print(f"Could not process image {filename} for description generation: {e}")
+    return descriptions_dict
+
+
+
+def generate_descriptions_with_share4v(
+    folder_path: str,
+    tokenizer,
+    model,
+    image_processor,
+    prompt: str,
+    conv_mode: str,
+    device: str = 'cuda:0',
+    **generation_kwargs
+) -> dict:
+    """
+    Generates descriptions for images using a pre-loaded ShareGPT4V/LLaVA model.
+
+    This function adapts the core logic from the typical 'eval_model' script
+    to work with models already in memory, avoiding repeated loading.
+
+    Args:
+        folder_path (str): Path to the folder containing images.
+        tokenizer: The pre-loaded tokenizer from share4v.
+        model: The pre-loaded ShareGPT4V/LLaVA model.
+        image_processor: The pre-loaded image processor from share4v.
+        prompt (str): The user's question or instruction (e.g., "Describe this painting.").
+                      The function will format this into the model's conversation template.
+        conv_mode (str): The conversation template to use (e.g., 'llava_v1', 'phi').
+                         This must match the model you are using.
+        device (str): The device to run inference on.
+        **generation_kwargs: Additional keyword arguments for model.generate(),
+                             e.g., temperature, top_p, max_new_tokens.
+
+    Returns:
+        dict: A dictionary mapping image file paths to a list of generated texts.
+    """
+    if not conv_templates:
+        print("Error: 'share4v' components not imported correctly. Cannot proceed.")
+        return {}
+
+    descriptions_dict = {}
+    model.to(device)
+
+    # Set default generation parameters if not provided
+    generation_kwargs.setdefault('temperature', 0)
+    generation_kwargs.setdefault('max_new_tokens', 512)
+
+    for filename in os.listdir(folder_path):
+        image_path = os.path.join(folder_path, filename)
+        if not (os.path.isfile(image_path) and filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif'))):
+            continue
+
+        try:
+            # 1. Load and process the image
+            image = Image.open(image_path).convert('RGB')
+            # The image processor for LLaVA/Share4V has a specific preprocess method
+            image_tensor = image_processor.preprocess(image, return_tensors='pt')['pixel_values'].to(device, dtype=torch.float16)
+
+            # 2. Prepare the conversation prompt using the specified conversation mode
+            # The prompt needs to be formatted with the special image token placeholder
+            query = f"{DEFAULT_IMAGE_TOKEN}\n{prompt}"
+            
+            conv = conv_templates[conv_mode].copy()
+            conv.append_message(conv.roles[0], query)
+            conv.append_message(conv.roles[1], None)
+            prompt_text = conv.get_prompt()
+
+            # 3. Tokenize the prompt, correctly handling the special image token
+            input_ids = tokenizer_image_token(prompt_text, tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).to(device)
+
+            # 4. Set up stopping criteria to end generation at the right time
+            stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
+            stopping_criteria = KeywordsStoppingCriteria([stop_str], tokenizer, input_ids)
+
+            # 5. Generate the response from the model
+            with torch.inference_mode():
+                output_ids = model.generate(
+                    input_ids,
+                    images=image_tensor,
+                    use_cache=True,
+                    stopping_criteria=[stopping_criteria],
+                    **generation_kwargs
+                )
+
+            # 6. Decode the output, removing the input prompt part
+            input_token_len = input_ids.shape[1]
+            outputs_decoded = tokenizer.batch_decode(output_ids[:, input_token_len:], skip_special_tokens=True)[0]
+            
+            # Clean up the output string
+            outputs_decoded = outputs_decoded.strip()
+            if outputs_decoded.endswith(stop_str):
+                outputs_decoded = outputs_decoded[:-len(stop_str)].strip()
+
+            descriptions_dict[image_path] = [outputs_decoded] # Keep format consistent
+
+        except Exception as e:
+            print(f"Could not process image {filename} with Share4V model: {e}")
+            import traceback
+            traceback.print_exc()
+
     return descriptions_dict
 
 
