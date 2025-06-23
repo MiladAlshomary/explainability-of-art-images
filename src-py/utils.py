@@ -10,16 +10,10 @@ from sklearn.decomposition import PCA
 from sklearn.cluster import DBSCAN
 from sklearn.metrics import silhouette_score
 
-# Imports for ShareGPT4V/LLaVA models.
-# These are needed for the 'generate_descriptions_with_share4v' function.
-try:
-    from share4v.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN
-    from share4v.conversation import conv_templates, SeparatorStyle
-    from share4v.mm_utils import tokenizer_image_token, KeywordsStoppingCriteria, get_model_name_from_path
-except ImportError:
-    print("Warning: Could not import 'share4v' components. The 'generate_descriptions_with_share4v' function will not be available.")
-    # Define dummy placeholders to avoid crashing if share4v is not installed
-    conv_templates = {}
+
+from share4v.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN
+from share4v.conversation import conv_templates, SeparatorStyle
+from share4v.mm_utils import tokenizer_image_token, KeywordsStoppingCriteria
 
 
 def image_captioning(folder_path, model_name, model_type="caption_coco_flant5xl", num_captions=5):
