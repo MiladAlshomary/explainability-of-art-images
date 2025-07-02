@@ -1,17 +1,22 @@
 import argparse
 import json
-from share4v.model.builder import load_pretrained_model
-from utils import generate_descriptions_with_share4v, get_model_name_from_path
+from utils import generate_descriptions_with_share4v
 
-def image_analysis_with_gallery_gpt(image_path, model_path, model_base=None):
+def image_analysis_with_gallery_gpt(image_path, model_path, model_base="Lin-Chen/ShareGPT4V-7B"):
     from llava.model.builder import load_pretrained_model
     from llava.mm_utils import (
         get_model_name_from_path,
     )
 
-    model_name = get_model_name_from_path(model_path)
+    # model_name = get_model_name_from_path(model_base)
+    # tokenizer, model, image_processor, context_len = load_pretrained_model(
+    #     model_path, model_base, model_name
+    # )
+
     tokenizer, model, image_processor, context_len = load_pretrained_model(
-        model_path, model_base, model_name
+        model_path=model_path,
+        model_base="Lin-Chen/ShareGPT4V-7B",
+        model_name="llava-v1.5-7b"
     )
 
     descriptions = generate_descriptions_with_share4v(
@@ -29,6 +34,9 @@ def image_analysis_with_gallery_gpt(image_path, model_path, model_base=None):
     return descriptions
 
 def image_analysis_with_share4v(image_path, model_path):
+    from share4v.model.builder import load_pretrained_model
+    from share4v.mm_utils import get_model_name_from_path
+
     tokenizer, model, image_processor, context_len = load_pretrained_model(
         model_path=model_path,
         model_base=None,

@@ -4,17 +4,12 @@ import os
 import argparse # Added for command-line argument parsing
 import json # Added for saving results to JSON
 import torch
+import tqdm
 
 # Imports for clustering and dimensionality reduction
 from sklearn.decomposition import PCA
 from sklearn.cluster import DBSCAN
 from sklearn.metrics import silhouette_score
-
-
-from share4v.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN
-from share4v.conversation import conv_templates, SeparatorStyle
-from share4v.mm_utils import tokenizer_image_token, KeywordsStoppingCriteria
-
 
 def image_captioning(folder_path, model_name, model_type="caption_coco_flant5xl", num_captions=5):
     from lavis.models import load_model_and_preprocess
@@ -185,6 +180,12 @@ def generate_descriptions_with_share4v(
     Returns:
         dict: A dictionary mapping image file paths to a list of generated texts.
     """
+
+    from share4v.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN
+    from share4v.conversation import conv_templates, SeparatorStyle
+    from share4v.mm_utils import tokenizer_image_token, KeywordsStoppingCriteria
+
+
     if not conv_templates:
         print("Error: 'share4v' components not imported correctly. Cannot proceed.")
         return {}
@@ -196,7 +197,7 @@ def generate_descriptions_with_share4v(
     generation_kwargs.setdefault('temperature', 0)
     generation_kwargs.setdefault('max_new_tokens', 512)
 
-    for filename in os.listdir(folder_path):
+    for filename in tqdm.tqdm(os.listdir(folder_path)):
         image_path = os.path.join(folder_path, filename)
         if not (os.path.isfile(image_path) and filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif'))):
             continue
